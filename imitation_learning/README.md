@@ -1,0 +1,1 @@
+This program contains the implementation of the following Imitation Learning algorithms: Behavior Cloning, DAGGER (https://www.ri.cmu.edu/publications/an-invitation-to-imitation/), General Adversarial Imitation Learning (https://arxiv.org/abs/1606.03476)
