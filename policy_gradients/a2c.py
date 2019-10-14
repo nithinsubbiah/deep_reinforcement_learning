@@ -1,7 +1,11 @@
+import sys
+import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F 
+from torch.distributions import Categorical
 import gym
+import numpy as np
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -14,7 +18,7 @@ class ActorPolicy(nn.Module):
 
     def __init__(self, input_size, output_size):
         
-        super(Policy, self).__init__()
+        super(ActorPolicy, self).__init__()
 
         # Actor network
         self.no_states = input_size
@@ -51,14 +55,14 @@ class CriticPolicy(nn.Module):
 
     def __init__(self, input_size, output_size):
         
-        super(Policy, self).__init__()
+        super(CriticPolicy, self).__init__()
 
         
         self.no_states = input_size
         self.output_size = output_size
 
-        self.critic_fc1.apply(self.init_layer)
         self.critic_fc1 = nn.Linear(self.no_states, 16)
+        self.critic_fc1.apply(self.init_layer)
 
         self.critic_fc2 = nn.Linear(16, 16)
         self.critic_fc2.apply(self.init_layer)
@@ -79,21 +83,21 @@ class CriticPolicy(nn.Module):
         return state_value
 
 
-class a2c():
+class A2C():
 
-    def __init__(self, environment, actor_policy, actor_lr, critic_policy, critic_lr, n=20):
+    def __init__(self, environment, actor_policy, actor_lr, critic_policy, critic_lr, num_episodes, render, n = 20, discount_factor = 0.9):
         
         self.env = environment
         self.actor_policy = actor_policy
         self.actor_lr = actor_lr  
         self.critic_policy = critic_policy
         self.critic_lr = critic_lr
+        self.num_episodes = num_episodes
         self.n = n                             #The value of N in N-step A2C.
+        self.render = render
+        self.gamma = discount_factor
 
-    def train():
-        
-
-    def generate_episode(self, render = False):
+    def generate_episode(self):
 
         states = []
         actions = []
@@ -102,7 +106,7 @@ class a2c():
         state_values = []
 
         done = False
-        state = self.env.reset().to(device)
+        state = torch.from_numpy(self.env.reset()).to(device)
     
         while not done:
     
@@ -115,19 +119,63 @@ class a2c():
             m = Categorical(action_probs)
             # and sample an action using the distribution
             action = m.sample() 
-            state, reward, done, info = env.step(action)
+            state, reward, done, info = self.env.step(action.item())
+            
+            state = torch.from_numpy(state).to(device)
+
+            reward = torch.from_numpy(np.asarray(reward, dtype=np.float32)).to(device)
+            state_value = state_value.to(device)
 
             actions.append(action)
             rewards.append(reward)
             log_probs.append(m.log_prob(action))
             state_values.append(state_value)
 
-            if render:
+            if self.render:
                 env.render()
+        
+        return torch.stack(log_probs), torch.stack(state_values), torch.squeeze(torch.stack(rewards)), torch.stack(actions), torch.stack(states)  
 
-        return 
-    
+    def train(self):
+        
+        policy_losses = []
+        value_losses = []
+
+        for episode in range(self.num_episodes):
             
+            log_probs, state_values, rewards, actions, states = self.generate_episode()
+
+            episode_length = len(states)
+
+            # List to store the N-step return for each step in trajectory
+            N_step_returns = []
+
+            # Looping through each step of the episode length from the last
+            for t in reversed(range(episode_length)):
+                
+                # Find the state value from the nth state
+                if (t+self.n) >= episode_length:
+                    V_end = 0
+                else:
+                    V_end = state_values[t+self.n]
+                print(V_end)
+                G = 0
+                # Find the utility function until nth state
+                for k in range(self.n):
+                    if (t+k) < episode_length:
+                        G = G + np.power(self.gamma, k) * rewards[t+k]
+
+                # Sum both returns till nth step and value of the (n+1)th step
+                n_step_return = np.power(self.gamma, self.n) * V_end + G 
+
+                N_step_returns.append(n_step_return)
+
+            # Reverses list to denote trajectory from t to episode length
+            N_step_returns.reverse()
+            # N_step_returns = torch.stack(N_step_returns)
+            # Problem with stacking tensors. Not all elements have a backprop fn
+            
+                                    
 
 def parse_arguments():
     # Command-line flags are defined here.
@@ -166,6 +214,15 @@ def main(args):
     # Create the environment.
     env = gym.make('LunarLander-v2')
 
+    state_space_size = env.observation_space.shape[0]
+    action_space_size = env.action_space.n
+
+    actor = ActorPolicy(state_space_size, action_space_size)
+    critic = CriticPolicy(state_space_size, 1)
+
+    a2c = A2C(env, actor, lr, critic, critic_lr, num_episodes,render, n)
+
+    a2c.train()
 
 if __name__ == '__main__':
     main(sys.argv)
