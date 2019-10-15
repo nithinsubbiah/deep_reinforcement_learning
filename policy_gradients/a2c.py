@@ -7,6 +7,15 @@ from torch.distributions import Categorical
 import gym
 import numpy as np
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+from datetime import date
+from tensorboardX import SummaryWriter
+writer = SummaryWriter("runs_a2c/exp1")
+date_str = date.today().strftime("%d_%m_%Y")
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class ActorPolicy(nn.Module):
@@ -97,6 +106,15 @@ class A2C():
         self.render = render
         self.gamma = discount_factor
 
+        self.actor_optimizer = torch.optim.Adam(actor_policy.parameters(), lr=actor_lr)
+        self.critic_optimizer = torch.optim.Adam(critic_policy.parameters(), lr=critic_lr)
+
+        self.test_frequency = 500
+        self.summary_frequency = 100
+        self.saving_frequency = 2000
+        self.test_rewards = []
+        self.test_rewards_stddev = []
+
     def generate_episode(self):
 
         states = []
@@ -157,8 +175,8 @@ class A2C():
                 if (t+self.n) >= episode_length:
                     V_end = 0
                 else:
-                    V_end = state_values[t+self.n]
-                print(V_end)
+                    V_end = state_values[t+self.n].item()
+
                 G = 0
                 # Find the utility function until nth state
                 for k in range(self.n):
@@ -167,15 +185,80 @@ class A2C():
 
                 # Sum both returns till nth step and value of the (n+1)th step
                 n_step_return = np.power(self.gamma, self.n) * V_end + G 
-
                 N_step_returns.append(n_step_return)
 
             # Reverses list to denote trajectory from t to episode length
             N_step_returns.reverse()
-            # N_step_returns = torch.stack(N_step_returns)
-            # Problem with stacking tensors. Not all elements have a backprop fn
+
+            N_step_returns = torch.stack(N_step_returns)
+            state_values = torch.squeeze(state_values)
+
+            # No state_value grad needed for actor update
+            with torch.no_grad():
+                advantage_actor = N_step_returns - state_values
+            actor_loss = (-log_probs*advantage_actor).mean()
+
+            advantage_critic = N_step_returns - state_values
+            critic_loss = advantage_critic.pow(2).mean()
+
+            total_loss = actor_loss + critic_loss            
+
+            self.actor_policy.train()
+            self.critic_policy.train()     
+
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            self.actor_optimizer.step()
+
+            self.critic_optimizer.zero_grad()
+            critic_loss.backward()
+            self.critic_optimizer.step()
+
+            writer.add_scalar('lunarlander_a2c/reward_episode', np.array(torch.sum(rewards).item()), episode)
             
-                                    
+            # Summaries
+            if(episode%self.summary_frequency == 0):
+                # meme reference
+                print ("Is this LOSS? : " + str(total_loss.item()) + " Reward: " + str(torch.sum(rewards).item()))
+            
+            if(episode%self.saving_frequency == 0):
+                # saving model
+                print ("Saving Model")
+                torch.save(self.actor_policy, "./runs_a2c/a2c_actor_" + str(episode) + "_" + date_str)
+                torch.save(self.critic_policy, "./runs_a2c/a2c_critic_" + str(episode) + "_" + date_str)
+
+            if(episode%self.test_frequency == 0):
+                print ("Testing")
+                self.test(episode)
+
+    def test(self, episode_no):
+        
+        self.actor_policy.eval()
+
+        test_reward_arr = []
+        test_reward = torch.Tensor([0])
+        
+        for episode_count in range(100):
+            _, _, rewards, _, _ = self.generate_episode()
+            test_reward += torch.sum(rewards)
+            test_reward_arr.append(torch.sum(rewards))
+
+        test_reward = test_reward/100
+
+        # standard deviation
+        test_reward_arr = torch.stack(test_reward_arr)
+        test_reward_std_dev = test_reward_arr.std().item()
+
+        writer.add_scalar('lunarlander_a2c/cumulative_average_reward', np.array(test_reward.item()), episode_no)
+
+        self.test_rewards.append(test_reward.item())
+        self.test_rewards_stddev.append(test_reward_std_dev)
+        range_x_axis = np.arange(0, episode_no+1, self.test_frequency)
+
+        plt.errorbar(range_x_axis, self.test_rewards, self.test_rewards_stddev)
+        plt.xlabel('Episode number')
+        plt.ylabel('Cumulative Test Rewards / Standard Deviation')
+        plt.savefig("./runs_a2c/Test_plot_%d.png"%episode_no)
 
 def parse_arguments():
     # Command-line flags are defined here.
