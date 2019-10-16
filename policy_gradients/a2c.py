@@ -22,7 +22,7 @@ class ActorPolicy(nn.Module):
 
     def init_layer(self, l):
         if type(l) == nn.Linear:
-            torch.nn.init.kaiming_normal_(l.weight)
+            torch.nn.init.kaiming_uniform_(l.weight)
             torch.nn.init.zeros_(l.bias)
 
     def __init__(self, input_size, output_size):
@@ -33,17 +33,17 @@ class ActorPolicy(nn.Module):
         self.no_states = input_size
         self.no_action = output_size
         
-        self.actor_fc1 = nn.Linear(self.no_states, 16)
+        self.actor_fc1 = nn.Linear(self.no_states, 64)
         self.actor_fc1.apply(self.init_layer)
         # self.fc1.bias.data.fill_(0)
 
-        self.actor_fc2 = nn.Linear(16, 16)
+        self.actor_fc2 = nn.Linear(64, 64)
         self.actor_fc2.apply(self.init_layer)
         
-        self.actor_fc3 = nn.Linear(16, 16)
+        self.actor_fc3 = nn.Linear(64, 64)
         self.actor_fc3.apply(self.init_layer)
         
-        self.actor_fc4 = nn.Linear(16, self.no_action)
+        self.actor_fc4 = nn.Linear(64, self.no_action)
         self.actor_fc4.apply(self.init_layer)
 
     def forward(self, state):
@@ -55,31 +55,31 @@ class ActorPolicy(nn.Module):
 
         return action_prob
 
-class CriticPolicy(nn.Module):
+class Critic(nn.Module):
 
     def init_layer(self, l):
         if type(l) == nn.Linear:
-            torch.nn.init.kaiming_normal_(l.weight)
+            torch.nn.init.kaiming_uniform_(l.weight)
             torch.nn.init.zeros_(l.bias)
 
     def __init__(self, input_size, output_size):
         
-        super(CriticPolicy, self).__init__()
+        super(Critic, self).__init__()
 
         
         self.no_states = input_size
         self.output_size = output_size
 
-        self.critic_fc1 = nn.Linear(self.no_states, 16)
+        self.critic_fc1 = nn.Linear(self.no_states, 64)
         self.critic_fc1.apply(self.init_layer)
 
-        self.critic_fc2 = nn.Linear(16, 16)
+        self.critic_fc2 = nn.Linear(64, 64)
         self.critic_fc2.apply(self.init_layer)
         
-        self.critic_fc3 = nn.Linear(16, 16)
+        self.critic_fc3 = nn.Linear(64, 64)
         self.critic_fc3.apply(self.init_layer)
         
-        self.critic_fc4 = nn.Linear(16, self.output_size)
+        self.critic_fc4 = nn.Linear(64, self.output_size)
         self.critic_fc4.apply(self.init_layer)
 
     def forward(self, state):
@@ -94,7 +94,7 @@ class CriticPolicy(nn.Module):
 
 class A2C():
 
-    def __init__(self, environment, actor_policy, actor_lr, critic_policy, critic_lr, num_episodes, render, n = 20, discount_factor = 0.9):
+    def __init__(self, environment, actor_policy, actor_lr, critic_policy, critic_lr, num_episodes, render, n = 20, discount_factor = 0.99):
         
         self.env = environment
         self.actor_policy = actor_policy
@@ -166,6 +166,9 @@ class A2C():
             
             log_probs, state_values, rewards, actions, states = self.generate_episode()
 
+            # Normalizing rewards for faster optimization
+            rewards = rewards/100
+
             episode_length = len(states)
 
             # List to store the N-step return for each step in trajectory
@@ -196,13 +199,9 @@ class A2C():
             N_step_returns = torch.stack(N_step_returns)
             state_values = torch.squeeze(state_values)
 
-            # No state_value grad needed for actor update
-            with torch.no_grad():
-                advantage_actor = N_step_returns - state_values
-            actor_loss = (-log_probs*advantage_actor).mean()
+            actor_loss = (-log_probs*(N_step_returns - state_values.detach())).mean()
 
-            advantage_critic = N_step_returns - state_values
-            critic_loss = advantage_critic.pow(2).mean()
+            critic_loss = F.mse_loss(N_step_returns, state_values)
 
             total_loss = actor_loss + critic_loss            
 
@@ -303,7 +302,7 @@ def main(args):
     action_space_size = env.action_space.n
 
     actor = ActorPolicy(state_space_size, action_space_size).to(device)
-    critic = CriticPolicy(state_space_size, 1).to(device)
+    critic = Critic(state_space_size, 1).to(device)
 
     a2c = A2C(env, actor, lr, critic, critic_lr, num_episodes,render, n)
 
