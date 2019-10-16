@@ -87,7 +87,7 @@ class CriticPolicy(nn.Module):
         x = F.relu(self.critic_fc1(state))
         x = F.relu(self.critic_fc2(x))
         x = F.relu(self.critic_fc3(x))
-        state_value = F.softmax(self.critic_fc4(x)) 
+        state_value = self.critic_fc4(x)
 
         return state_value
 
@@ -131,7 +131,7 @@ class A2C():
             states.append(state)
 
             action_probs = self.actor_policy(state)
-            state_value = self.critic_policy(state)
+            # state_value = self.critic_policy(state)
 
             # create a categorical distribution over the list of probabilities of actions
             m = Categorical(action_probs)
@@ -142,17 +142,21 @@ class A2C():
             state = torch.from_numpy(state).to(device)
 
             reward = torch.from_numpy(np.asarray(reward, dtype=np.float32)).to(device)
-            state_value = state_value.to(device)
+            # state_value = state_value.to(device)
 
             actions.append(action)
             rewards.append(reward)
             log_probs.append(m.log_prob(action))
-            state_values.append(state_value)
+            # state_values.append(state_value)
 
             if self.render:
                 env.render()
+
+        states = torch.stack(states)
+        state_values = self.critic_policy(states)
         
-        return torch.stack(log_probs), torch.stack(state_values), torch.squeeze(torch.stack(rewards)), torch.stack(actions), torch.stack(states)  
+        # return torch.stack(log_probs), torch.stack(state_values), torch.squeeze(torch.stack(rewards)), torch.stack(actions), torch.stack(states)  
+        return torch.stack(log_probs), torch.squeeze(torch.stack(state_values)), torch.squeeze(torch.stack(rewards)), torch.stack(actions), states  
 
     def train(self):
         
@@ -187,7 +191,7 @@ class A2C():
                 n_step_return = np.power(self.gamma, self.n) * V_end + G 
                 N_step_returns.append(n_step_return)
 
-            # Reverses list to denote trajectory from t to episode length
+            # Reverses list to represent trajectory from 0 to episode length
             N_step_returns.reverse()
 
             N_step_returns = torch.stack(N_step_returns)
@@ -215,7 +219,6 @@ class A2C():
             self.critic_optimizer.step()
 
             writer.add_scalar('lunarlander_a2c/reward_episode', np.array(torch.sum(rewards).item()), episode)
-            
             # Summaries
             if(episode%self.summary_frequency == 0):
                 # meme reference
@@ -300,8 +303,8 @@ def main(args):
     state_space_size = env.observation_space.shape[0]
     action_space_size = env.action_space.n
 
-    actor = ActorPolicy(state_space_size, action_space_size)
-    critic = CriticPolicy(state_space_size, 1)
+    actor = ActorPolicy(state_space_size, action_space_size).to(device)
+    critic = CriticPolicy(state_space_size, 1).to(device)
 
     a2c = A2C(env, actor, lr, critic, critic_lr, num_episodes,render, n)
 
