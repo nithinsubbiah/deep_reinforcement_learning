@@ -154,9 +154,8 @@ class A2C():
 
         states = torch.stack(states)
         state_values = self.critic_policy(states)
-        
         # return torch.stack(log_probs), torch.stack(state_values), torch.squeeze(torch.stack(rewards)), torch.stack(actions), torch.stack(states)  
-        return torch.stack(log_probs), torch.squeeze(torch.stack(state_values)), torch.squeeze(torch.stack(rewards)), torch.stack(actions), states  
+        return torch.stack(log_probs), torch.squeeze(state_values), torch.squeeze(torch.stack(rewards)), torch.stack(actions), states  
 
     def train(self):
         
